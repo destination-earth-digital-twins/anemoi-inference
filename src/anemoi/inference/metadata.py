@@ -79,6 +79,7 @@ def _remove_full_paths(x: Any) -> Any:
 
 class Metadata(PatchMixin, LegacyMixin):
     """An object that holds metadata of a checkpoint."""
+    multi_domain = False
 
     def __init__(self, metadata: dict[str, Any], supporting_arrays: dict[str, FloatArray] = {}):
         """Initialize the Metadata object.
@@ -99,6 +100,11 @@ class Metadata(PatchMixin, LegacyMixin):
     def _indices(self) -> DotDict:
         """Return the data indices."""
         return self._metadata.data_indices
+
+    @property
+    def _dataset(self) -> DotDict:
+        "Return dataset information"
+        return self._metadata.dataset
 
     @property
     def _config_data(self) -> DotDict:
@@ -363,7 +369,7 @@ class Metadata(PatchMixin, LegacyMixin):
     @property
     def variables(self) -> tuple:
         """Return the variables as found in the training dataset."""
-        return tuple(self._metadata.dataset.variables)
+        return tuple(self._metadata.dataset["MEPS"].variables)
 
     @cached_property
     def variables_metadata(self) -> dict[str, Any]:
@@ -1147,6 +1153,43 @@ class Metadata(PatchMixin, LegacyMixin):
                     main[k] = v
 
         merge(self._metadata, patch)
+
+class SingleDomainMetadata(Metadata):
+    "Metadata class for single domain model"
+    pass
+
+class MultiDomainMetadata(Metadata):
+    "Metadata class for multi domain model"
+    multi_domain = True 
+
+    def __init__(self, metadata: dict[str, Any], domain: str, supporting_arrays: dict[str, dict[str, FloatArray]] = {}):
+        super().__init__(metadata=metadata, supporting_arrays=supporting_arrays.get(domain, {}))
+        self.domain = domain
+    
+    def __repr__(self) -> str:
+        return f"<MultiDomainMetadata - domain={self.domain}"
+    
+    @cached_property
+    def number_of_grid_points(self) -> int:
+        """Return the number of grid points per fields."""
+        
+        if "grid_indices" in self._supporting_arrays:
+            return len(self.load_supporting_array("grid_indices"))
+        try:
+            return self._metadata.dataset[self.domain].shape[-1]
+        except AttributeError:
+            if not USE_LEGACY:
+                raise
+            return self._legacy_number_of_grid_points()
+
+class MetaDataFactory:
+    def __new__(cls, metadata: dict[str, Any], supporting_arrays: dict[str, FloatArray] = {}, domain: str = None):
+        if regional_datasets := list(metadata["config"]["dataloader"].get("regional_datasets", []).keys()) and domain:
+            LOG.info(f"Loading Multi-Domain metadata with domain name `{domain}`")
+            return MultiDomainMetadata(metadata, domain, supporting_arrays)
+        LOG.info("Loading Single-Domain metadata")
+        return SingleDomainMetadata(metadata,supporting_arrays)
+        
 
 
 class SourceMetadata(Metadata):
