@@ -34,7 +34,7 @@ from .external_graph import (
 
 LOG = logging.getLogger(__name__)
 
-class MultiDomainCheckpointMixin:
+class MultiDomainMixin:
     domain: str
     
     @cached_property
@@ -44,14 +44,16 @@ class MultiDomainCheckpointMixin:
             self.config.checkpoint,
             patch_metadata=self.config.patch_metadata
         ) 
+    def predict_step(self, model: "torch.nn.Module", input_tensor_torch: "torch.Tensor", **kwargs: Any) -> "torch.Tensor":
+        return model.predict_step(input_tensor_torch, graph_label=self.domain, **kwargs)
 
-class External(MultiDomainCheckpointMixin,ExternalGraphRunner):
+class External(MultiDomainMixin,ExternalGraphRunner):
     def __init__(
         self,
         config: dict,
         domain: str,
+        graph: str,
         *,
-        graph: str | None = None,
         output_mask: dict | None = {},
         graph_dataset: Any | None = None,
         update_supporting_arrays: dict[Literal["graph", "file"], dict[str, str]] | None = None,
@@ -64,14 +66,13 @@ class External(MultiDomainCheckpointMixin,ExternalGraphRunner):
         super().__init__(
             config, 
             graph, 
-            output_mask, 
-            update_dataset, 
-            update_supporting_arrays, 
-            update_number_of_grid_points, 
-            check_state_dict
+            output_mask=output_mask, 
+            graph_dataset=graph_dataset, 
+            update_supporting_arrays=update_supporting_arrays, 
+            updated_number_of_grid_points=updated_number_of_grid_points, 
+            check_state_dict=check_state_dict
             )
         
-        #self._checkpoint = MultiDomainCheckpoint(config.checkpoint,self.domain, config.patch_metadata)
     @cached_property
     def model(self) -> "torch.nn.Module":
         # load the model from the checkpoint
@@ -93,7 +94,7 @@ class External(MultiDomainCheckpointMixin,ExternalGraphRunner):
             model_instance, state_dict_ckpt, keywords=["bias", "weight", "processors.normalizer"]
         )
 
-        LOG.info("Successfully built model with external graph and reassigned model weights!")
+        LOG.info(f"Successfully built model with external graph and reassigned model weights with domain: {self.domain}!")
         self.device = device
         return model_instance.to(self.device)
     
@@ -101,12 +102,11 @@ class External(MultiDomainCheckpointMixin,ExternalGraphRunner):
     #     return super().model.predict_step(input_tensor_torch, graph_label = self.domain, **kwargs)
 
 
-class Internal(MultiDomainCheckpointMixin,DefaultRunner):
+class Internal(MultiDomainMixin,DefaultRunner):
     def __init__(self, config: dict, domain: str, **kwargs: Any):
         self.domain = domain
 
         super().__init__(config)
-        #self._checkpoint = MultiDomainCheckpoint(config.checkpoint,self.domain, config.patch_metadata)
 
 
     @cached_property
@@ -120,22 +120,26 @@ class Internal(MultiDomainCheckpointMixin,DefaultRunner):
                 f"Available internal domains: {list(_model.graph_data.keys())}"
             )
         return _model
-    
-    # def predict_step(self, input_tensor_torch: "torch.Tensor", **kwargs: Any) -> "torch.Tensor":
-    #     return super().model.predict_step(input_tensor_torch, graph_label = self.domain, **kwargs)
-
+        
 @runner_registry.register("multi_domain")
 @main_argument("domain")
 class MultiDomain(DefaultRunner):
     def __new__(cls, config: dict, *args: list, **kwargs: dict) -> None:
-        if "graph" in kwargs:
-            LOG.info("Using external graph with Multi Domain")
-            return External(config, *args, **kwargs)
-        LOG.info("External graph is not provided for multi-domain, using iternal")
+        #if "graph" in kwargs:
+        #    LOG.info("Using external graph with Multi Domain")
+        #    return External(config, *args, **kwargs)
+        #LOG.info("External graph is not provided for multi-domain, using iternal")
         # print(type(Internal(config, *args, **kwargs)))
         # exit()
-        return Internal(config, *args, **kwargs)
+        _use_external = "graph" in kwargs
+        multi_domain_instance = External if _use_external else Internal
 
-    def predict_step(self, input_tensor_torch: "torch.Tensor", **kwargs: Any) -> "torch.Tensor":
-        return super().model.predict_step(input_tensor_torch, graph_label = self.domain, **kwargs)
+        Chosen = type(
+            f"{cls.__name__}{'External' if _use_external else 'Internal'}",
+            (cls, multi_domain_instance),
+            {}
+        )
+        LOG.info(f"Multi Domain is using: {cls.__name__}{'External' if _use_external else 'Internal'}")
+        return object.__new__(Chosen) #Internal(config, *args, **kwargs)
 
+    
