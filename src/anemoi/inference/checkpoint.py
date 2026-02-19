@@ -761,6 +761,7 @@ class MultiDomainCheckpoint(Checkpoint):
             Metadata to patch the checkpoint with, by default None.
         """
         assert domain is not None, f"Domain has not been provided, got domain: {domain}"
+        super().__init__(source)
         self.domain = domain
         self._source = source
         self.patch_metadata = patch_metadata
@@ -771,7 +772,6 @@ class MultiDomainCheckpoint(Checkpoint):
 
         if isinstance(self._source, Metadata):
             return self._source
-
         try:
             result = MetaDataFactory(*load_metadata(self.path, supporting_arrays=True), domain=self.domain)
         except Exception as e:
