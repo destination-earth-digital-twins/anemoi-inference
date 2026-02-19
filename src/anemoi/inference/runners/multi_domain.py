@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 from copy import deepcopy
 from functools import cached_property
 from typing import Any
@@ -47,7 +48,73 @@ class MultiDomainMixin:
     def predict_step(self, model: "torch.nn.Module", input_tensor_torch: "torch.Tensor", **kwargs: Any) -> "torch.Tensor":
         return model.predict_step(input_tensor_torch, graph_label=self.domain, **kwargs)
 
-class External(MultiDomainMixin,ExternalGraphRunner):
+def check_all_domains(metadata: dict[str, Any], key: str) -> bool:
+    """Check if a specific key is present in the metadata for all domains."""
+    current_domain_value = metadata[next(iter(metadata))][key]
+    assert all(
+        current_domain_value == domain_metadata[key]
+        for _, domain_metadata in metadata.items()
+    ), f"Value for key '{key}' is not the same across all domains in the metadata."
+
+
+def retrieve_domain_metadata(metadata: dict[str, Any], key: str) -> Any:
+    """Retrieve metadata for a specific domain from a multi-domain metadata dictionary."""
+
+    check_all_domains(metadata, key)
+    first_domain = next(iter(metadata))
+    return metadata[first_domain][key]
+
+def get_pl(variable_name: str) ->tuple[str, int] | tuple[str,None]:
+    assert isinstance(variable_name,str), f"expected type str, but got type {type(variable_name)}"
+    split = variable_name.split("_")
+    if len(split) > 1 and split[-1].isdigit():
+        return split[0], int(split[-1])
+    return split[0], None
+
+def construct_variable_metadata(variables: list[str]) -> dict:
+    """
+    Function to recreate a simplified version of MARS keys
+    for an external graph setup.
+
+    variables: list[str] 
+        Contains the variables used during training. 
+        These are being used to determine MARS keys
+    
+    return:
+        a dict containing metadata with MARS keys
+    """
+    assert len(variables) > 0 #, "Something went wrong"
+
+    variable_metadata = defaultdict(dict)
+    for var in variables:
+        if "_" in var:
+            param, levelist = get_pl(var)
+            if levelist:
+                variable_metadata[var]["mars"] = {
+                    "param" : param,
+                    "levtype": levtype,
+                    "levelist": levelist,
+                }
+            else:
+                # decide sfc or constant 
+        #     param, levelist = var.split("_")
+        #     if levelist.isdigit():
+        #         levtype = "pl"
+
+        #         variable_metadata[var]["mars"] = {
+        #             "param" : param,
+        #             "levtype": levtype,
+        #             "levelist": int(levelist),
+        #         }
+        # else:
+        #     variable_metadata[var]["mars"] = {
+        #         "param" : var,
+        #         "levtype": "sfc",
+        #     }
+    return variable_metadata
+
+
+class External(MultiDomainMixin,DefaultRunner): #ExternalGraphRunner):
     def __init__(
         self,
         config: dict,
@@ -65,14 +132,76 @@ class External(MultiDomainMixin,ExternalGraphRunner):
 
         super().__init__(
             config, 
-            graph, 
-            output_mask=output_mask, 
-            graph_dataset=graph_dataset, 
-            update_supporting_arrays=update_supporting_arrays, 
-            updated_number_of_grid_points=updated_number_of_grid_points, 
-            check_state_dict=check_state_dict
+            # graph, 
+            # output_mask=output_mask, 
+            # graph_dataset=graph_dataset, 
+            # update_supporting_arrays=update_supporting_arrays, 
+            # updated_number_of_grid_points=updated_number_of_grid_points, 
+            # check_state_dict=check_state_dict
             )
+        #print(self.checkpoint._metadata._dataset["ARA"].variables_metadata==self.checkpoint._metadata._dataset["ARA"].variables_metadata)
+        self.check_state_dict = check_state_dict
+        self.graph_path = graph
+
+        shape = self.graph["data"].x.shape[0]
         
+        _variables = retrieve_domain_metadata(
+                self.checkpoint._metadata._dataset, "variables"
+            )
+        _variables_metadata = construct_variable_metadata(_variables)
+        
+        self.checkpoint._metadata._dataset[self.domain] = {
+            "variables": _variables,
+            "variables_metadata": _variables_metadata,
+            "frequency": retrieve_domain_metadata(
+                self.checkpoint._metadata._dataset, "frequency"
+            ),
+            "supporting_arrays": get_updated_supporting_arrays(
+                update_supporting_arrays, self.graph
+            ),
+            "dtype": retrieve_domain_metadata(
+                self.checkpoint._metadata._dataset, "dtype"
+            ),
+            "shape": shape,
+        }
+
+        self.checkpoint._supporting_arrays[self.domain] = get_updated_supporting_arrays(
+            update_supporting_arrays, self.graph
+        )
+
+        if output_mask:
+            nodes = output_mask["nodes_name"]
+            attribute = output_mask["attribute_name"]
+            self.checkpoint._supporting_arrays["output_mask"] = (
+                self.graph[nodes][attribute].numpy().squeeze()
+            )
+            LOG.info(
+                "Moving attribute '%s' of nodes '%s' from external graph to supporting arrays as 'output_mask'.",
+                attribute,
+                nodes,
+            )
+        if updated_number_of_grid_points is not None:
+            if isinstance(updated_number_of_grid_points, str):
+                updated_number_of_grid_points = len(
+                    self.graph["data"][updated_number_of_grid_points]
+                )
+            self.checkpoint._metadata.number_of_grid_points = (
+                updated_number_of_grid_points
+            )
+            LOG.info(
+                "Updated number of grid points in the checkpoint metadata to %s.",
+                updated_number_of_grid_points,
+            )
+    @cached_property
+    def graph(self):
+
+        graph_path = self.graph_path
+        assert os.path.isfile(
+            graph_path
+        ), f"No graph found at {graph_path}. An external graph needs to be specified in the config file for this runner."
+        LOG.info("Loading external graph from path %s.", graph_path)
+        return torch.load(graph_path, map_location="cpu", weights_only=False)
+
     @cached_property
     def model(self) -> "torch.nn.Module":
         # load the model from the checkpoint
