@@ -369,7 +369,7 @@ class Metadata(PatchMixin, LegacyMixin):
     @property
     def variables(self) -> tuple:
         """Return the variables as found in the training dataset."""
-        return tuple(self._metadata.dataset["MEPS"].variables)
+        return tuple(self._metadata.dataset.variables)
 
     @cached_property
     def variables_metadata(self) -> dict[str, Any]:
@@ -388,7 +388,6 @@ class Metadata(PatchMixin, LegacyMixin):
                 if name not in result:
                     continue
                 result[name]["constant_in_time"] = True
-
         return result
 
     @cached_property
@@ -1163,7 +1162,7 @@ class MultiDomainMetadata(Metadata):
     multi_domain = True 
 
     def __init__(self, metadata: dict[str, Any], domain: str, supporting_arrays: dict[str, dict[str, FloatArray]] = {}):
-        super().__init__(metadata=metadata, supporting_arrays=supporting_arrays.get(domain, {}))
+        super().__init__(metadata=metadata, supporting_arrays=supporting_arrays)
         self.domain = domain
     
     def __repr__(self) -> str:
@@ -1172,16 +1171,97 @@ class MultiDomainMetadata(Metadata):
     @cached_property
     def number_of_grid_points(self) -> int:
         """Return the number of grid points per fields."""
-        
+        #print(self._metadata.dataset["MEPS"].shape[-1], "hhhhhhhhh")
+        #exit()
+        #breakpoint()
         if "grid_indices" in self._supporting_arrays:
             return len(self.load_supporting_array("grid_indices"))
         try:
-            return self._metadata.dataset[self.domain].shape[-1]
+            return self._metadata.dataset[self.domain].shape #[-1]
         except AttributeError:
             if not USE_LEGACY:
                 raise
             return self._legacy_number_of_grid_points()
+    
+    def load_supporting_array(self, name: str) -> FloatArray:
+        """Load a supporting array by name.
 
+        Parameters
+        ----------
+        name : str
+            The name of the supporting array.
+
+        Returns
+        -------
+        FloatArray
+            The supporting array.
+
+        Raises
+        ------
+        ValueError
+            If the supporting array is not found.
+        """
+        if name not in self._supporting_arrays[self.domain]:
+            LOG.error("No supporting array named `%s` found.", name)
+            LOG.error("Supporting arrays found:")
+            for names in self._supporting_arrays.keys():
+                LOG.error("  %s", names)
+            raise ValueError(f"Supporting array `{name}` not found")
+        return self._supporting_arrays[self.domain][name]
+
+    def has_supporting_array(self, name: str) -> bool:
+        """Check if the metadata has a supporting array with the given name.
+
+        Parameters
+        ----------
+        name : str
+            The name of the supporting array.
+
+        Returns
+        -------
+        bool
+            True if the supporting array exists, False otherwise.
+        """
+        return name in self._supporting_arrays[self.domain]
+
+    @property
+    def supporting_arrays(self) -> dict[str, FloatArray]:
+        """Return the supporting arrays."""
+        return self._supporting_arrays[self.domain]
+
+    @property
+    def latitudes(self) -> FloatArray | None:
+        """Return the latitudes."""
+        return self._supporting_arrays[self.domain].get("latitudes")
+
+    @property
+    def longitudes(self) -> FloatArray | None:
+        """Return the longitudes."""
+        return self._supporting_arrays[self.domain].get("longitudes")
+
+    @property
+    def variables(self) -> tuple:
+        """Return the variables as found in the training dataset."""
+        return tuple(self._metadata.dataset[self.domain].variables)
+
+    @cached_property
+    def variables_metadata(self) -> dict[str, Any]:
+        """Return the variables and their metadata as found in the training dataset."""
+        try:
+            result = self._metadata.dataset[self.domain].variables_metadata
+            if USE_LEGACY:
+                self._legacy_check_variables_metadata(result)
+        except AttributeError:
+            if not USE_LEGACY:
+                raise
+            result = self._legacy_variables_metadata()
+
+        if "constant_fields" in self._metadata.dataset[self.domain]:
+            for name in self._metadata.dataset[self.domain].constant_fields:
+                if name not in result:
+                    continue
+                result[name]["constant_in_time"] = True
+        return result
 class MetaDataFactory:
     def __new__(cls, metadata: dict[str, Any], supporting_arrays: dict[str, FloatArray] = {}, domain: str = None):
         if regional_datasets := list(metadata["config"]["dataloader"].get("regional_datasets", []).keys()) and domain:
