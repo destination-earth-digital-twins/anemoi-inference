@@ -73,6 +73,10 @@ def get_pl(variable_name: str) ->tuple[str, int] | tuple[str,None]:
 
 def construct_variable_metadata(variables: list[str]) -> dict:
     """
+    TODO: implement a more robust and general for decoding variable names:
+    deciding pl level -> easy/done
+    decide sfc vs constant a bit tricky...
+
     Function to recreate a simplified version of MARS keys
     for an external graph setup.
 
@@ -92,25 +96,26 @@ def construct_variable_metadata(variables: list[str]) -> dict:
             if levelist:
                 variable_metadata[var]["mars"] = {
                     "param" : param,
-                    "levtype": levtype,
+                    "levtype": "pl",
                     "levelist": levelist,
                 }
             else:
                 # decide sfc or constant 
-        #     param, levelist = var.split("_")
-        #     if levelist.isdigit():
-        #         levtype = "pl"
+                print(var.split("_"))
+                # param, levelist = var.split("_")
+                # if levelist.isdigit():
+                #     levtype = "pl"
 
-        #         variable_metadata[var]["mars"] = {
-        #             "param" : param,
-        #             "levtype": levtype,
-        #             "levelist": int(levelist),
-        #         }
-        # else:
-        #     variable_metadata[var]["mars"] = {
-        #         "param" : var,
-        #         "levtype": "sfc",
-        #     }
+                #     variable_metadata[var]["mars"] = {
+                #         "param" : param,
+                #         "levtype": levtype,
+                #         "levelist": int(levelist),
+                #     }
+                # # else:
+                variable_metadata[var]["mars"] = {
+                    "param" : var,
+                    "levtype": "sfc",
+                }
     return variable_metadata
 
 
@@ -152,7 +157,7 @@ class External(MultiDomainMixin,DefaultRunner): #ExternalGraphRunner):
         
         self.checkpoint._metadata._dataset[self.domain] = {
             "variables": _variables,
-            "variables_metadata": _variables_metadata,
+            "variables_metadata": self.checkpoint._metadata._dataset["ARA"].variables_metadata,
             "frequency": retrieve_domain_metadata(
                 self.checkpoint._metadata._dataset, "frequency"
             ),
@@ -172,7 +177,9 @@ class External(MultiDomainMixin,DefaultRunner): #ExternalGraphRunner):
         if output_mask:
             nodes = output_mask["nodes_name"]
             attribute = output_mask["attribute_name"]
-            self.checkpoint._supporting_arrays["output_mask"] = (
+            print(self.checkpoint._supporting_arrays[self.domain],self.checkpoint._supporting_arrays.keys())
+            exit()
+            self.checkpoint._supporting_arrays[self.domain]["output_mask"] = (
                 self.graph[nodes][attribute].numpy().squeeze()
             )
             LOG.info(
@@ -180,6 +187,7 @@ class External(MultiDomainMixin,DefaultRunner): #ExternalGraphRunner):
                 attribute,
                 nodes,
             )
+
         if updated_number_of_grid_points is not None:
             if isinstance(updated_number_of_grid_points, str):
                 updated_number_of_grid_points = len(
