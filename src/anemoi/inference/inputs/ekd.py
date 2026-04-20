@@ -217,7 +217,7 @@ class EkdInput(Input):
         dates: list[Date],
         latitudes: FloatArray | None = None,
         longitudes: FloatArray | None = None,
-        dtype: DTypeLike = np.float32,
+        dtype: DTypeLike = np.float64,
         flatten: bool = True,
         ref_date_index: int = -1,
     ) -> State:
@@ -353,7 +353,7 @@ class EkdInput(Input):
         variables: list[str] | None = None,
         latitudes: FloatArray | None = None,
         longitudes: FloatArray | None = None,
-        dtype: DTypeLike = np.float32,
+        dtype: DTypeLike = np.float64,
         flatten: bool = True,
         ref_date_index: int = -1,
     ) -> State:
@@ -423,7 +423,7 @@ class EkdInput(Input):
             dates=dates,
             latitudes=current_state.get("latitudes", None),
             longitudes=current_state.get("longitudes", None),
-            dtype=np.float32,
+            dtype=np.float64,
             flatten=True,
         )
 
