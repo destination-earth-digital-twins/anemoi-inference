@@ -28,6 +28,7 @@ from anemoi.inference.types import DataRequest
 from anemoi.inference.types import Date
 
 from .metadata import Metadata
+from .metadata import MetaDataFactory
 from .metadata import Variable
 
 LOG = logging.getLogger(__name__)
@@ -67,7 +68,6 @@ def _download_huggingfacehub(huggingface_config: Any) -> str:
         raise ValueError(
             f"None or Multiple ckpt files found in repo, {ckpt_files}.\nCannot pick one to load, please specify `filename`."
         )
-
 
 class Checkpoint:
     """Represents an inference checkpoint."""
@@ -126,10 +126,10 @@ class Checkpoint:
             return self._source
 
         try:
-            result = Metadata(*load_metadata(self.path, supporting_arrays=True))
+            result = MetaDataFactory(*load_metadata(self.path, supporting_arrays=True))
         except Exception as e:
             LOG.warning("Version does not support `supporting_arrays` (%s)", e)
-            result = Metadata(load_metadata(self.path))
+            result = MetaDataFactory(load_metadata(self.path))
 
         if self.patch_metadata:
             LOG.warning("Patching metadata with %r", self.patch_metadata)
@@ -740,3 +740,46 @@ class SourceCheckpoint(Checkpoint):
     def operational_config(self) -> dict[str, Any]:
         LOG.warning("The `operational_config` property is deprecated.")
         return False
+
+class MultiDomainCheckpoint(Checkpoint):
+    """Represents an Multi-Domain inference checkpoint."""
+
+    def __init__(
+        self,
+        domain: str, 
+        source: str | Metadata | dict[str, Any],
+        *,
+        patch_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize the Checkpoint.
+
+        Parameters
+        ----------
+        path : str
+            The path to the checkpoint.
+        patch_metadata : Optional[Dict[str, Any]], optional
+            Metadata to patch the checkpoint with, by default None.
+        """
+        assert domain is not None, f"Domain has not been provided, got domain: {domain}"
+        super().__init__(source)
+        self.domain = domain
+        self._source = source
+        self.patch_metadata = patch_metadata
+    
+    @cached_property
+    def _metadata(self) -> Metadata:
+        """Get the metadata."""
+
+        if isinstance(self._source, Metadata):
+            return self._source
+        try:
+            result = MetaDataFactory(*load_metadata(self.path, supporting_arrays=True), domain=self.domain)
+        except Exception as e:
+            LOG.warning("Version does not support `supporting_arrays` (%s)", e)
+            result = MetaDataFactory(load_metadata(self.path), domain=self.domain)
+
+        if self.patch_metadata:
+            LOG.warning("Patching metadata with %r", self.patch_metadata)
+            result.patch(self.patch_metadata)
+
+        return result
